@@ -1,0 +1,23 @@
+[project]
+name = "parallel-topic-analyzer"
+version = "0.1.0"
+description = "LangGraph agent with parallel task execution using Ollama"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "langgraph>=0.2.0",
+    "langchain-core>=0.3.0",
+    "langchain-ollama>=0.2.0",
+    "python-dotenv>=1.0.0",
+    "requests>=2.31.0",
+]
+
+[project.scripts]
+analyze-topic = "main:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src"]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
