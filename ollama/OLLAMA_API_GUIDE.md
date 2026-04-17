@@ -2,7 +2,36 @@
 
 Complete reference for interacting with Ollama from remote hosts.
 
+## Table of Contents
 
+- [Base URL](#base-url)
+- [How Ollama Serve Works](#how-ollama-serve-works)
+  - [Architecture Overview](#architecture-overview)
+  - [API Endpoints](#api-endpoints)
+  - [Request Flow](#request-flow)
+  - [Process Management](#process-management)
+- [Inference Process Deep Dive](#inference-process-deep-dive)
+  - [Model Loading](#1-model-loading)
+  - [Tokenization](#2-tokenization)
+  - [Embedding Lookup](#3-embedding-lookup)
+  - [Transformer Layers](#4-transformer-layers-the-core-inference)
+  - [Output Generation](#5-output-generation-autoregressive-decoding)
+  - [KV Cache Optimization](#6-kv-cache-optimization)
+  - [Hardware Execution Path](#7-hardware-execution-path)
+  - [Memory Layout](#8-memory-layout-during-inference)
+  - [Performance Factors](#key-performance-factors)
+- [Model Management Endpoints](#1-model-management-endpoints)
+- [Text Generation Endpoints](#2-text-generation-endpoints)
+- [Embeddings](#3-embeddings)
+- [OpenAI-Compatible Endpoints](#4-openai-compatible-endpoints)
+- [Server Status](#5-server-status)
+- [Advanced: Creating Custom Models](#6-advanced-creating-custom-models)
+- [Practical Use Cases](#7-practical-use-cases)
+- [Python Example Client](#8-python-example-client)
+- [JavaScript/Node.js Example](#9-javascriptnodejs-example)
+- [Performance Tips](#10-performance-tips)
+- [Common Response Formats](#11-common-response-formats)
+- [Quick Reference](#quick-reference)
 
 ---
 
@@ -10,6 +39,353 @@ Complete reference for interacting with Ollama from remote hosts.
 ```
 http://192.168.x.x:11434
 ```
+
+---
+
+## How Ollama Serve Works
+
+### Architecture Overview
+
+`ollama serve` starts a local HTTP server that provides a REST API for model inference. It manages model loading, memory allocation, and hardware acceleration automatically.
+
+**Server Components:**
+- **HTTP Server** - Listens on `localhost:11434` (configurable)
+- **Model Manager** - Loads and caches models in memory
+- **Inference Engine** - Runs model computations (llama.cpp backend)
+- **Hardware Backend** - Metal (Apple Silicon), CUDA (NVIDIA), or CPU
+
+### API Endpoints
+
+The server exposes multiple endpoint types:
+
+**Core Ollama API:**
+```
+POST /api/generate    - Generate completions
+POST /api/chat        - Chat completions
+POST /api/embeddings  - Generate embeddings
+GET  /api/tags        - List available models
+POST /api/pull        - Download models
+POST /api/push        - Upload models
+POST /api/create      - Create custom models
+GET  /api/ps          - List running models
+```
+
+**OpenAI-Compatible API:**
+```
+POST /v1/chat/completions  - OpenAI format chat
+POST /v1/completions       - OpenAI format completion
+GET  /v1/models            - OpenAI format model list
+```
+
+### Request Flow
+
+```
+Your Application
+    ↓
+HTTP Request (JSON)
+    ↓
+localhost:11434 (Ollama Server)
+    ↓
+Model Manager
+    ├─ Check if model is loaded in memory
+    ├─ Load model from disk if needed (~/.ollama/models/)
+    └─ Allocate GPU/CPU resources
+    ↓
+Inference Engine (llama.cpp)
+    ├─ Tokenize input text
+    ├─ Run transformer layers
+    ├─ Generate output tokens
+    └─ Decode tokens to text
+    ↓
+HTTP Response (JSON/Stream)
+    ↓
+Your Application
+```
+
+### Process Management
+
+**Server Lifecycle:**
+- `ollama serve` - Starts the server (runs in foreground)
+- Server keeps running until stopped (Ctrl+C or process kill)
+- Models auto-unload after timeout (default: 5 minutes)
+- Can keep models loaded indefinitely with `keep_alive: -1`
+
+**Resource Management:**
+- Models loaded on first request (cold start: 1-5 seconds)
+- Subsequent requests use cached model (hot start: instant)
+- Multiple models can be loaded simultaneously (memory permitting)
+- Automatic memory management and cleanup
+
+**Check Server Status:**
+```bash
+# Check if running
+curl http://localhost:11434/
+
+# List loaded models
+curl http://localhost:11434/api/ps
+
+# Get server version
+curl http://localhost:11434/api/version
+```
+
+---
+
+## Inference Process Deep Dive
+
+This section explains what happens inside `ollama serve` when processing a request, from receiving text to generating a response.
+
+### 1. Model Loading
+
+**On-Demand Loading:**
+```
+Request arrives → Check memory → Load if needed
+```
+
+**Model File Structure:**
+- **Format:** GGUF (GPT-Generated Unified Format)
+- **Location:** `~/.ollama/models/blobs/`
+- **Components:**
+  - Model weights (quantized tensors)
+  - Tokenizer vocabulary
+  - Configuration (architecture, hyperparameters)
+  - Metadata (author, license, etc.)
+
+**Quantization Levels:**
+| Type | Bits | Size | Speed | Quality |
+|------|------|------|-------|---------|
+| F16 | 16 | 100% | Slow | Best |
+| Q8_0 | 8 | 50% | Medium | Excellent |
+| Q5_1 | 5-6 | 35% | Fast | Good |
+| Q4_0 | 4 | 25% | Very Fast | Acceptable |
+| Q2_K | 2-3 | 15% | Fastest | Lower |
+
+**Memory Allocation:**
+- **CPU Mode:** Loads to system RAM
+- **GPU Mode:** Loads to VRAM (or unified memory on Apple Silicon)
+- **Hybrid:** Large models split between GPU and CPU (offloading)
+
+### 2. Tokenization
+
+**Text → Numbers Conversion:**
+```
+Input: "Hello, how are you?"
+     ↓ Tokenizer
+Output: [15339, 11, 703, 527, 499, 30]
+```
+
+**Tokenizer Types:**
+- **BPE (Byte-Pair Encoding)** - GPT models, Llama
+- **SentencePiece** - Many modern LLMs
+- **WordPiece** - BERT family
+
+**Special Tokens:**
+- `<BOS>` - Beginning of sequence
+- `<EOS>` - End of sequence  
+- `<PAD>` - Padding token
+- `<UNK>` - Unknown token
+
+### 3. Embedding Lookup
+
+**Token IDs → Dense Vectors:**
+```
+Token ID: 15339
+       ↓ Embedding Matrix Lookup
+Vector: [0.234, -0.452, 0.891, ..., 0.123]  (e.g., 4096 dimensions)
+```
+
+Each token becomes a high-dimensional vector that captures semantic meaning. This is the first learned component of the model.
+
+### 4. Transformer Layers (The Core Inference)
+
+Modern LLMs consist of many transformer layers (e.g., 32-80 layers). Each layer processes the sequence through:
+
+**Per-Layer Operations:**
+```
+Input Embeddings
+    ↓
+┌─────────────────────────────────┐
+│  Layer 1-N (repeated N times)   │
+│  ┌──────────────────────────┐  │
+│  │ 1. Self-Attention        │  │
+│  │    - Compute Q, K, V     │  │
+│  │    - Attention scores    │  │
+│  │    - Weighted aggregation│  │
+│  └──────────────────────────┘  │
+│           ↓                      │
+│  ┌──────────────────────────┐  │
+│  │ 2. Feed-Forward Network  │  │
+│  │    - Linear projection   │  │
+│  │    - Activation (GELU)   │  │
+│  │    - Linear projection   │  │
+│  └──────────────────────────┘  │
+│           ↓                      │
+│  └─ + Residual connections      │
+│  └─ + Layer normalization       │
+└─────────────────────────────────┘
+    ↓
+Output Logits
+```
+
+**Self-Attention Mechanism:**
+```python
+# Simplified attention calculation
+Q = input @ W_query   # Query: what am I looking for?
+K = input @ W_key     # Key: what do I contain?
+V = input @ W_value   # Value: what do I output?
+
+scores = softmax(Q @ K.T / sqrt(d_k))  # Attention weights
+output = scores @ V                     # Weighted combination
+```
+
+**Hardware Parallelization:**
+- **CPU:** Uses SIMD instructions (AVX2/AVX-512/NEON)
+  - Multiple matrix operations per clock cycle
+  - Multi-threaded across CPU cores
+- **GPU:** Massively parallel execution
+  - Thousands of cores processing simultaneously
+  - Metal (Apple), CUDA (NVIDIA), ROCm (AMD)
+
+### 5. Output Generation (Autoregressive Decoding)
+
+**Token-by-Token Generation:**
+```
+Loop until <EOS> or max_tokens:
+  1. Run transformer on all tokens so far
+  2. Get logits (scores) for next token
+  3. Apply sampling strategy
+  4. Select next token
+  5. Decode token → text
+  6. Append to sequence
+  7. Repeat with expanded context
+```
+
+**Sampling Strategies:**
+
+| Strategy | Description | Use Case |
+|----------|-------------|----------|
+| **Greedy** | Always pick highest probability | Deterministic, factual responses |
+| **Temperature** | Scale probabilities (0.1-2.0) | Control randomness |
+| **Top-k** | Sample from top k tokens | Limit to likely options |
+| **Top-p (Nucleus)** | Sample from cumulative p% | Dynamic token set |
+| **Min-p** | Minimum probability threshold | Filter unlikely tokens |
+
+**Example Generation Timeline:**
+```
+Prompt: "The cat sat on the"
+  ↓ Transformer → Logits: [mat: 0.6, floor: 0.2, table: 0.15, ...]
+  ↓ Sample → "mat"
+  
+Context: "The cat sat on the mat"
+  ↓ Transformer → Logits: [and: 0.4, .: 0.3, ,: 0.2, ...]
+  ↓ Sample → "."
+  
+Result: "The cat sat on the mat."
+```
+
+### 6. KV Cache Optimization
+
+**Problem:** Re-computing past tokens is wasteful
+```
+Without cache:
+  Token 1: Process [1]
+  Token 2: Process [1, 2]          ← Recomputes token 1
+  Token 3: Process [1, 2, 3]       ← Recomputes tokens 1, 2
+  ...
+  Complexity: O(n²)
+```
+
+**Solution:** Cache Key-Value matrices from attention
+```
+With KV cache:
+  Token 1: Process [1], cache K₁, V₁
+  Token 2: Process [2], reuse K₁, V₁, cache K₂, V₂
+  Token 3: Process [3], reuse K₁, V₁, K₂, V₂, cache K₃, V₃
+  ...
+  Complexity: O(n)
+```
+
+**Trade-off:**
+- **Speed:** 10-100x faster generation
+- **Memory:** Grows with context length (cached K, V per layer)
+- **Limit:** Max context length (e.g., 2048, 4096, 8192 tokens)
+
+### 7. Hardware Execution Path
+
+**On macOS (Apple Silicon):**
+```
+Ollama Request
+    ↓
+llama.cpp (inference engine)
+    ├─ GPU Path (preferred)
+    │   └─ Metal API
+    │       └─ GPU Shaders (matrix ops)
+    │           └─ Apple Silicon GPU
+    │
+    └─ CPU Path (fallback/hybrid)
+        └─ Accelerate Framework
+            └─ BLAS operations
+                └─ ARM NEON SIMD
+                    └─ CPU Cores
+```
+
+**GPU vs CPU Performance:**
+- **GPU:** 10-100x faster for large models
+- **CPU:** Sufficient for small models (1B-3B parameters)
+- **Hybrid:** Large models offload layers between GPU/CPU
+
+**Memory Architecture (Apple Silicon):**
+- **Unified Memory:** Shared between CPU and GPU (no copying overhead)
+- **Memory Bandwidth:** M3 Max: ~400 GB/s (critical for LLM inference)
+
+### 8. Memory Layout During Inference
+
+**Runtime Memory Allocation:**
+```
+┌─────────────────────────────────────┐
+│ Model Weights (Read-Only)          │  2-40 GB
+│  - Embedding matrix                 │
+│  - Transformer layer weights        │
+│  - Output projection                │
+├─────────────────────────────────────┤
+│ KV Cache (Dynamic, per request)    │  0.5-8 GB
+│  - Grows with context length        │
+│  - Per-layer K, V matrices          │
+├─────────────────────────────────────┤
+│ Activations (Temporary)             │  0.1-2 GB
+│  - Computed per layer               │
+│  - Reused across layers             │
+├─────────────────────────────────────┤
+│ Output Buffer (Stream)              │  <1 MB
+│  - Generated tokens                 │
+└─────────────────────────────────────┘
+```
+
+**Context Length Impact:**
+```
+2K context:  ~500 MB KV cache
+4K context:  ~1 GB KV cache
+8K context:  ~2 GB KV cache
+16K context: ~4 GB KV cache
+```
+
+### Key Performance Factors
+
+| Factor | Impact | Optimization |
+|--------|--------|--------------|
+| **Model Size** | Larger = slower, better quality | Use quantization (Q4, Q5) |
+| **Quantization** | Lower bits = 2-4x faster | Q4_0 for speed, Q8_0 for quality |
+| **Context Length** | Longer = slower (O(n²) attention) | Truncate or use sparse attention |
+| **Batch Size** | Larger = better GPU utilization | Process multiple requests together |
+| **Hardware** | GPU >> CPU for large models | Enable Metal/CUDA |
+| **Memory** | More = load full model in GPU | Upgrade RAM/VRAM |
+| **Temperature** | Lower = faster (less sampling) | 0.0-0.3 for factual tasks |
+| **Max Tokens** | Fewer = faster completion | Set `num_predict` appropriately |
+
+**Example Latency (7B model, Q4 quantization, M3 Max):**
+- **First token (cold):** 1-3 seconds (model loading)
+- **First token (warm):** 50-200 ms (prompt processing)
+- **Subsequent tokens:** 20-50 ms each (autoregressive decoding)
+- **Total (100 tokens):** ~3-7 seconds
 
 ---
 
