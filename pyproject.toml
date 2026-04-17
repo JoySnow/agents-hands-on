@@ -1,0 +1,37 @@
+[project]
+name = "agents-hands-on"
+version = "0.1.0"
+description = "Hands-on examples for building AI agents with LangGraph and Ollama"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    # LangChain & LangGraph
+    "langgraph>=0.2.0",
+    "langchain-core>=0.3.0",
+    "langchain-ollama>=0.2.0",
+
+    # Utilities
+    "python-dotenv>=1.0.0",
+    "requests>=2.31.0",
+
+    # Jupyter support
+    "jupyter>=1.0.0",
+    "ipykernel>=6.25.0",
+    "notebook>=7.0.0",
+    "ipywidgets>=8.1.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.4.0",
+    "black>=23.7.0",
+    "ruff>=0.0.285",
+]
+
+[tool.black]
+line-length = 100
+target-version = ["py310"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"

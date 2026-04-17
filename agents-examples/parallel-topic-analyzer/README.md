@@ -71,44 +71,66 @@ ollama pull deepseek-r1:1.5b
 
 ## Installation
 
-```bash
-cd agents-examples/parallel-topic-analyzer
+From the **repository root**:
 
-# Install dependencies with uv
+```bash
+# Install all dependencies (creates .venv at repo root)
 uv sync
+
+# This installs all packages needed for this and other examples
 ```
 
-This creates a virtual environment and installs all required packages:
+Dependencies (from root `pyproject.toml`):
 - `langgraph`: State graph framework
 - `langchain-core`: LangChain base classes
 - `langchain-ollama`: Ollama integration
 - `python-dotenv`: Environment configuration
 - `requests`: HTTP client for Ollama API checks
+- `jupyter`: Notebook support
 
 ## Usage
 
 ### Basic Usage
 
 ```bash
-uv run python main.py "Artificial Intelligence"
+# From the parallel-topic-analyzer directory
+cd agents-examples/parallel-topic-analyzer
+
+# Activate the shared environment
+source ../../.venv/bin/activate
+python main.py "Artificial Intelligence"
+
+# Or use uv run from repo root
+cd ../..
+uv run python agents-examples/parallel-topic-analyzer/main.py "Artificial Intelligence"
 ```
 
 ### Verbose Mode (shows timing)
 
 ```bash
-uv run python main.py "Climate Change" --verbose
+python main.py "Climate Change" --verbose
 ```
 
 ### Custom Model
 
 ```bash
-uv run python main.py "Quantum Computing" --model llama3.2:1b
+python main.py "Quantum Computing" --model deepseek-r1:8b
 ```
 
 ### Custom Ollama Host
 
 ```bash
-uv run python main.py "Machine Learning" --ollama-host http://192.168.1.100:11434
+python main.py "Machine Learning" --ollama-host http://192.168.1.100:11434
+```
+
+### Jupyter Notebook
+
+```bash
+# From repo root
+source .venv/bin/activate
+jupyter notebook
+
+# Navigate to: agents-examples/parallel-topic-analyzer/notebooks/demo.ipynb
 ```
 
 ### Using Environment Variables
