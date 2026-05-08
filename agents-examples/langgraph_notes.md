@@ -39,3 +39,27 @@ State隔离级别:
     - 方案 A：分布式锁 (Distributed Lock)
     - 方案 B：消息队列串行化 (Message Queue / Actor Model)
     - plus 请求防抖 (Debouncing): Drop/Reject duplicate incoming calls
+
+
+## RAG
+
+混合检索（Hybrid Search）
+### 分布式系统经典难题：异构数据源打分融合（Score Fusion）
+
+破局点 1：倒数秩融合 (RRF - Reciprocal Rank Fusion)
+- 为了解决量纲不同的问题，业界最常用的算法是 RRF。它不看绝对得分，只看相对排名。
+
+破局点 2：终极杀器 —— 重排序模型 (Reranker model)
+- 重排序（Reranking）模型（如 BGE-Reranker, Cohere Rerank）。
+- 这是目前把 RAG 准确率从 70% 拔高到 95% 的核心秘密。
+- 架构流程：
+    - 粗排（Recall）：通过 ES (Top 50) + Vector DB (Top 50) 混合检索，利用 RRF 合并去重，快速捞出 20 篇候选文档。
+    - 精排（Rerank）：把这 20 篇文档和用户的原始问题，一起打包发送给 Reranker 模型。
+    - 降维打击：Reranker 模型使用的是“交叉注意力机制（Cross-Encoder）”。它不像 Embedding 那样把文本变成向量再比较，而是直接把“问题”和“文档”放在一起逐字阅读，然后输出一个极其精准的 0.0 ~ 1.0 的相关性得分。
+    - 截断输出（Top-K）：根据 Reranker 的精准得分，只保留最高的 3 篇文档，丢给大模型生成最终答案。
+
+对应到LangChain的几个核心组件：
+- BM25Retriever (负责稀疏精确检索)
+- VectorStoreRetriever (负责密集语义检索)
+- EnsembleRetriever (即“集成检索器”，底层默认使用 RRF 算法进行合并)
+- ContextualCompressionRetriever (上下文压缩检索器，用来挂载 Reranker 模型进行最终的精排截断)
