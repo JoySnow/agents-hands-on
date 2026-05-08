@@ -2,7 +2,7 @@ import re
 # 引入 ChatOllama
 from langchain_ollama import ChatOllama
 # 引入 LangChain 的标准消息类
-from langchain_core.messages import SystemMessage, HumanMessage, AIMessage
+from langchain_core.messages import SystemMessage, HumanMessage, AIMessage  #, ToolMessage
 
 # ==========================================
 # 0. 初始化本地 Ollama LLM
@@ -132,9 +132,18 @@ def run_agent(user_query: str, max_steps: int = 5):
 
             # 5. 将执行结果追加回上下文，触发下一轮思考
             # 【改动点】环境的反馈继续作为 HumanMessage 传给大模型
-            messages.append(
-                HumanMessage(content=f"Observation: {observation}")
-            )
+            # messages.append(
+            #     HumanMessage(content=f"Observation: {observation}"),
+            # )
+            # FIX for second llm invloke empty output:
+            # （由于我们是手写正则解析，我们暂时不用标准的 Tool Call API，
+            # 但可以伪装成一条系统层的反馈消息，而不是 HumanMessage）
+            messages.append(SystemMessage(content=f"工具执行完毕。Observation: {observation}\n请继续你的步骤。"))
+            # # FIX TRY for second llm invloke empty output:
+            # #   给它一个明确的“状态机唤醒信号（Wake-up Signal）”
+            # messages.append(
+            #     HumanMessage(content="\n\n请根据上述结果，继续输出 Thought。如果你已经得出结论，请输出 Final Answer.")
+            # )
         else:
             print("\n⚠️ LLM 输出未遵循协议格式，解析失败，强制结束。")
             break
