@@ -10,7 +10,8 @@ from langchain_core.messages import SystemMessage, HumanMessage, AIMessage
 # 确保终端已运行: ollama run qwen2.5 (或其他你本地有的模型)
 print("📡 Initializing Ollama LLM ...")
 llm = ChatOllama(
-    model="gemma4:e2b",  # 替换为你本地拉取的模型名称
+    # model="gemma4:e2b",  # 替换为你本地拉取的模型名称
+    model="qwen3.5:9b",
     temperature=0.1,  # Agent 场景建议保持低温度
 )
 
@@ -34,36 +35,69 @@ known_tools = {
 # ==========================================
 # 2. 定义系统提示词 (定义通信协议) - 保持不变
 # ==========================================
-SYSTEM_PROMPT = """你是一个可以通过使用工具来解决问题的智能助手。
-你可以使用以下工具：
+# SYSTEM_PROMPT_V1 = """你是一个可以通过使用工具来解决问题的智能助手。
+# 你可以使用以下工具：
+# - Calculator: 传入数学表达式，返回计算结果。
+
+# 你必须严格遵循以下文本格式进行思考和行动：
+# Thought: 你当前在思考什么，需要采取什么步骤。
+# Action: 你决定使用的工具名称（必须是 Calculator)。
+# Action Input: 传给工具的具体参数（例如 150/2)。
+# Observation: 调用工具，执行后返回的结果。(NEVER generate this by yourself. Read this from HumanMessage)。
+# ... (Thought/Action/Action Input/Observation 可以重复多次)
+# Thought: 我现在知道最终答案了。
+# Final Answer: 你给用户的最终回答。
+# """
+
+SYSTEM_PROMPT = """你是一个智能助手，你【绝对不能】自己做数学计算。
+你必须使用 Calculator 工具来计算结果。
+
+你可以使用的工具：
 - Calculator: 传入数学表达式，返回计算结果。
 
 你必须严格遵循以下文本格式进行思考和行动：
 Thought: 你当前在思考什么，需要采取什么步骤。
 Action: 你决定使用的工具名称（必须是 Calculator)。
 Action Input: 传给工具的具体参数（例如 150/2)。
-Observation: 调用工具，执行后返回的结果。(NEVER generate this by yourself. Read this from HumanMessage)。
+Observation: 等待工具调用执行后返回的结果。(NEVER generate this by yourself.)
 ... (Thought/Action/Action Input/Observation 可以重复多次)
 Thought: 我现在知道最终答案了。
 Final Answer: 你给用户的最终回答。
+
+【标准对话示例】
+用户: 一盒饼干20块，吃了5块，还剩几块？
+Thought: 我需要计算 20 减 5。我不能自己算，必须用工具。
+Action: Calculator
+Action Input: 20-5
+Observation: 15
+Thought: 我现在知道答案了。
+Final Answer: 还剩 15 块。
+【示例结束】
+
+现在，开始处理用户的真实问题。记住：严禁自己计算！
 """
 
 # ==========================================
 # 3. Agent 核心执行逻辑
 # ==========================================
 def run_agent(user_query: str, max_steps: int = 5):
+    # 把用户的问题包装一下，带上强制的起手式
+    forced_query = user_query + "\n【警告】你绝对不能自己计算Observation这一步的结果。请严格遵守协议。"
+
     # 【改动点】使用 LangChain 的 SystemMessage 和 HumanMessage
     messages = [
         SystemMessage(content=SYSTEM_PROMPT),
-        HumanMessage(content=user_query)
+        HumanMessage(content=forced_query)
     ]
 
     print(f"用户问题: {user_query}\n" + "="*40)
+    print(f"forced_query: {forced_query}\n") if forced_query else None
 
     for step in range(max_steps):
         # 1. 发起调用，获取 LLM 的决策
         # 【改动点】直接调用 llm.invoke()，传入消息列表
-        response = llm.invoke(messages)
+        print("messages: ", messages)
+        response = llm.invoke(messages, stop=["Observation:", "Observation", "Observation:\n"])
         llm_reply = response.content
 
         print(f"\n【LLM 状态机输出 - 第 {step+1} 步】:\n{llm_reply}")
