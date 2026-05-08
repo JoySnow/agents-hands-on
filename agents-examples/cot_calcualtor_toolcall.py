@@ -45,6 +45,38 @@ A Tool call response example:
 }
 """
 
+"""
+Force the LLM “既思考（输出 content），又行动（输出 tool_calls）”
+
+Q: How to let the reasoning engine to output the tool_calls and content both?
+
+A: 想要让它“既思考（输出 content），又行动（输出 tool_calls）”，你需要强迫它先输出自然语言，后输出工具调用指令。
+
+当你发现 ai_msg.content 为空，而 ai_msg.tool_calls 被填满时，说明模型在生成第一个 Token 时，就直接决定调用工具了。
+
+方案一：通过 Prompt 强制规划顺序 (Prompt Engineering)
+
+这样做的好处是原汁原味，符合多数大厂模型（如 GPT-4, Claude 3.5）的原生行为习惯。
+
+eg. SYSTEM_PROMPT = ```你是一个得力的助手。遇到数学问题请务必调用 calculator 工具。
+
+【关键指令】
+在调用任何工具之前，你必须先输出一段文字，解释你为什么要调用这个工具，以及你的计算逻辑是什么。
+思考完毕后，再发起工具调用。
+
+示例输出流：
+"我需要计算苹果咬掉一半的重量，所以我要用 150 除以 2。现在我将调用计算器。"
+[发起工具调用]
+```
+
+方案二：结构化思维链 (Structured CoT) 🔥 后端工程师最爱，极其稳定
+
+既然我们已经在使用 Function Calling（强类型契约），为什么还要依赖不稳定的 content 文本流来记录思考呢？
+
+我们可以直接把“思考过程”变成工具 API 的一个必填字段 (Required Parameter)！
+这是目前业界在使用小模型跑 Agent 时的最佳实践，它能达到近乎 100% 的成功率。
+"""
+
 import re
 import json
 # 引入 ChatOllama
@@ -72,10 +104,12 @@ llm = ChatOllama(
 # 【核心改变】使用 @tool 装饰器，LangChain 会自动读取函数的类型提示(str)
 # 和 Docstring("...")，将其转换为标准的 JSON Schema 发送给大模型。
 @tool
-def calculator(expression: str) -> str:
+def calculator(thought_process: str, expression: str) -> str:
     """一个简单的计算器工具。当你需要执行数学计算时调用它。
+    参数 thought_process: 极其重要！在执行计算前，你必须在这里写下你的详细推理步骤。
     参数 expression 必须是一个合法的数学表达式字符串，例如 '150/2' 或 '5+6'。
     """
+    print(f"\n[模型思考过程] {thought_process}")
     print(f"\n[后端逻辑执行] 正在计算: {expression}")
     try:
         # 注意: 实际业务中严禁直接使用 eval
