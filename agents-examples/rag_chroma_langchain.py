@@ -28,7 +28,12 @@ docs = [Document(page_content=text, metadata={"source": f"doc_{i}"}) for i, text
 # 3. 向量化并存入向量数据库 (Embedding & Indexing)
 # 底层逻辑：OllamaEmbeddings 会把上面的文字发给 nomic-embed-text，得到浮点数组，存入 ChromaDB
 print("正在计算 Embeddings 并写入内存向量数据库...")
-vector_db = Chroma.from_documents(documents=docs, embedding=embeddings)
+vector_db = Chroma.from_documents(
+                    documents=docs,
+                    embedding=embeddings,
+                    collection_name="company_holidays",
+                    persist_directory="./chroma_db_data"
+                    )
 print("✅ 知识库初始化完成！\n")
 
 

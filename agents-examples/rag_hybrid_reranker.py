@@ -72,7 +72,12 @@ print("--- 阶段一：构建双路召回引擎 (Dual-Recall Engine) ---")
 # 弱点：对具体的数字、错误码极度不敏感
 print("正在构建 Vector 索引...")
 embeddings = OllamaEmbeddings(model="nomic-embed-text")
-vector_store = Chroma.from_documents(docs, embeddings)
+vector_store = Chroma.from_documents(
+                    documents=docs,
+                    embedding=embeddings,
+                    collection_name="debug_error_10054",
+                    persist_directory="./chroma_db_data"
+                    )
 # 召回 Top 3
 vector_retriever = vector_store.as_retriever(search_kwargs={"k": 3})
 

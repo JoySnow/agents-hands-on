@@ -1,3 +1,5 @@
+# Agent Hands On Notes + Q&A
+
 ## LangGraph 理解&问答
 
 LangGraph 借用了前端 React/Redux 或者后端 事件溯源（Event Sourcing） 的设计理念。
@@ -63,3 +65,50 @@ State隔离级别:
 - VectorStoreRetriever (负责密集语义检索)
 - EnsembleRetriever (即“集成检索器”，底层默认使用 RRF 算法进行合并)
 - ContextualCompressionRetriever (上下文压缩检索器，用来挂载 Reranker 模型进行最终的精排截断)
+
+### ChromaDB
+
+它是 关系型元数据 (SQLite) 与 高性能向量索引 (HNSW 原始文件) 的混合体。
+
+- chroma.sqlite3 (The Brain):
+    - 存储 Collection 的定义、每个文档的原始文本（如果你选择存储的话）、用户定义的元数据（Metadata KV 对）以及 Write-Ahead Log (WAL)
+- UUID 文件夹 (The Muscles):
+    - 存储的是 向量索引段。
+
+```py
+from langchain_community.vectorstores import Chroma
+
+vector_db = Chroma.from_documents(
+                    documents=docs,
+                    embedding=embeddings,
+                    collection_name="company_holidays",
+                    persist_directory="./chroma_db_data"
+                )
+```
+
+#### 典型的目录结构示例:
+```
+$ tree chroma_db_data/                                                     [19:17:40]
+chroma_db_data/
+├── chroma.sqlite3                          # 核心控制平面：元数据、配置和日志
+└── 731d3033-dfc2-40f8-8279-ea64df9b520e    # 具体的存储段 (Segments)，通常以 UUID 命名
+    ├── header.bin                          # 索引头部信息，描述 HNSW 的参数
+    ├── data_level0.bin                     # HNSW 图的第 0 层数据（最稠密的一层）
+    ├── link_lists.bin                      # 节点之间的连接关系（图的边）
+    └── length.bin                          # 其他分层索引文件
+```
+
+#### Debug on the `chroma.sqlite3`:
+
+查看 SQLite 中的元数据
+```
+$ sqlite3 chroma.sqlite3 "SELECT name FROM collections;"
+company_holidays
+```
+查看各个段的配置
+```
+$ sqlite3 ./my_local_db/chroma.sqlite3 "SELECT * FROM segments;"
+731d3033-dfc2-40f8-8279-ea64df9b520e|urn:chroma:segment/vector/hnsw-local-persisted|VECTOR|7b0579b3-d72e-4c59-9e01-6cb35e121c04
+31260151-fe3f-45d4-821b-e34427b2cde8|urn:chroma:segment/metadata/sqlite|METADATA|7b0579b3-d72e-4c59-9e01-6cb35e121c04
+```
+

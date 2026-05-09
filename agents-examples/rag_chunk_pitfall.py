@@ -41,7 +41,11 @@ child_splitter = RecursiveCharacterTextSplitter(chunk_size=60, chunk_overlap=0)
 # ==========================================
 # 向量数据库：只存 Child Chunks (子文档)
 embeddings = OllamaEmbeddings(model="nomic-embed-text")
-vectorstore = Chroma(collection_name="split_parents", embedding_function=embeddings)
+vectorstore = Chroma(
+                    collection_name="split_parents_pcdr",
+                    embedding_function=embeddings,
+                    persist_directory="./chroma_db_data"
+                    )
 
 # KV 键值对数据库：只存 Parent Documents (主文档，通过 UUID 关联)
 # 在生产环境中，这里通常会换成 RedisStore 或 UpstashRedisStore
