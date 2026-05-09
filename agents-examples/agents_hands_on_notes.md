@@ -112,3 +112,10 @@ $ sqlite3 ./my_local_db/chroma.sqlite3 "SELECT * FROM segments;"
 31260151-fe3f-45d4-821b-e34427b2cde8|urn:chroma:segment/metadata/sqlite|METADATA|7b0579b3-d72e-4c59-9e01-6cb35e121c04
 ```
 
+### RAG enhance - 查询重写（Multi-Query）
+
+Lite LLM to rewrite the user query, say, LLM 扩写出 3 个专业 Query.
+
+完整链路：小白提问 -> LLM 扩写出 3 个专业 Query -> 并发召回 15 篇文档 -> 去重后剩余 10 篇 -> 统统丢给 Reranker 交叉打分 -> 截断留下得分最高的 3 篇 -> LLM 生成最终答案。这才是无懈可击的企业级闭环！
+
+#### TODO: Try this Multi-Query + Rerank
