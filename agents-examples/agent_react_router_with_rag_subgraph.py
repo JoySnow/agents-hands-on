@@ -4,6 +4,7 @@ from langchain_core.messages import BaseMessage, AIMessage, ToolMessage, HumanMe
 from langgraph.graph import StateGraph, START, END
 from langgraph.graph.message import add_messages
 from langchain_ollama import ChatOllama
+# from langsmith import traceable  # use $ source .env_langsmith
 
 # ==========================================
 # 1. 领域驱动设计：全局上下文

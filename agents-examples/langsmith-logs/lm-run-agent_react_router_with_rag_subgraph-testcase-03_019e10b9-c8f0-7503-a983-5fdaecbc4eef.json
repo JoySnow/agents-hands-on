@@ -1,0 +1,138 @@
+{
+  "inputs": {
+    "messages": [
+      {
+        "additional_kwargs": {},
+        "content": "帮我查一下我的订单 20260509 现在发货没有？顺便告诉我一下，如果收到货发现有破损，我应该怎么申请理赔？",
+        "id": "b2032d99-85e5-420c-9c8b-4f76059013d9",
+        "response_metadata": {},
+        "type": "human"
+      }
+    ]
+  },
+  "outputs": {
+    "messages": [
+      {
+        "additional_kwargs": {},
+        "content": "帮我查一下我的订单 20260509 现在发货没有？顺便告诉我一下，如果收到货发现有破损，我应该怎么申请理赔？",
+        "id": "b2032d99-85e5-420c-9c8b-4f76059013d9",
+        "response_metadata": {},
+        "type": "human"
+      },
+      {
+        "additional_kwargs": {},
+        "content": "",
+        "id": "lc_run--019e10b9-c8f1-7ef3-8213-20501a1c0da0-0",
+        "invalid_tool_calls": [],
+        "response_metadata": {
+          "created_at": "2026-05-10T07:11:22.140938Z",
+          "done": true,
+          "done_reason": "stop",
+          "eval_count": 151,
+          "eval_duration": 8882502501,
+          "load_duration": 98751500,
+          "logprobs": null,
+          "model": "qwen3.5:9b",
+          "model_name": "qwen3.5:9b",
+          "model_provider": "ollama",
+          "prompt_eval_count": 392,
+          "prompt_eval_duration": 1517114416,
+          "total_duration": 10539313083
+        },
+        "tool_calls": [
+          {
+            "args": {
+              "order_id": "20260509"
+            },
+            "id": "51e06c42-c210-4ce1-8a70-0363f2ddb992",
+            "name": "db_query",
+            "type": "tool_call"
+          },
+          {
+            "args": {
+              "query": "收到货发现有破损，如何申请理赔"
+            },
+            "id": "a81f8042-fe58-4035-aeec-59a5d27f91f4",
+            "name": "rag_search",
+            "type": "tool_call"
+          }
+        ],
+        "type": "ai",
+        "usage_metadata": {
+          "input_tokens": 392,
+          "output_tokens": 151,
+          "total_tokens": 543
+        }
+      },
+      {
+        "additional_kwargs": {},
+        "content": "数据库返回：订单 20260509 正在派送中。",
+        "id": "ed98e1d9-c657-49e2-a696-ae01ef6667fb",
+        "response_metadata": {},
+        "status": "success",
+        "tool_call_id": "51e06c42-c210-4ce1-8a70-0363f2ddb992",
+        "type": "tool"
+      },
+      {
+        "additional_kwargs": {},
+        "content": "知识库返回：报销需要财务总监签字。",
+        "id": "00593ee7-8d31-476b-a281-366e87edc578",
+        "response_metadata": {},
+        "status": "success",
+        "tool_call_id": "a81f8042-fe58-4035-aeec-59a5d27f91f4",
+        "type": "tool"
+      },
+      {
+        "additional_kwargs": {},
+        "content": "关于您的订单20260509，目前状态显示为**正在派送中**，说明已经发货了。\n\n关于收到货发现有破损如何申请理赔的问题，我查询了公司知识库，但知识库中目前只有报销流程（需要财务总监签字）的相关信息，没有找到关于商品破损理赔申请的具体流程。\n\n建议您通过以下方式咨询理赔事宜：\n1. 联系在线客服\n2. 查看订单详情页是否有理赔入口\n3. 拨打客服热线咨询\n\n请问您还需要查询其他订单信息吗？",
+        "id": "lc_run--019e10b9-f21f-7113-810b-ea4b599236cc-0",
+        "invalid_tool_calls": [],
+        "response_metadata": {
+          "created_at": "2026-05-10T07:11:36.06216Z",
+          "done": true,
+          "done_reason": "stop",
+          "eval_count": 204,
+          "eval_duration": 11945392456,
+          "load_duration": 96994375,
+          "logprobs": null,
+          "model": "qwen3.5:9b",
+          "model_name": "qwen3.5:9b",
+          "model_provider": "ollama",
+          "prompt_eval_count": 507,
+          "prompt_eval_duration": 1821366208,
+          "total_duration": 13917725291
+        },
+        "tool_calls": [],
+        "type": "ai",
+        "usage_metadata": {
+          "input_tokens": 507,
+          "output_tokens": 204,
+          "total_tokens": 711
+        }
+      }
+    ],
+    "rewritten_queries": [
+      "收到货发现有破损，如何申请理赔 流程",
+      "收到货发现有破损，如何申请理赔 规定"
+    ]
+  },
+  "metadata": {
+    "ls_integration": "langgraph",
+    "ls_run_depth": 0,
+    "revision_id": "567ba95-dirty"
+  },
+  "langsmith": {
+    "organization": {
+      "name": "Personal",
+      "id": "e8be4eed-e7c4-400a-a665-f02c7786d714"
+    },
+    "workspace": {
+      "name": "Workspace 1",
+      "id": "a25d3bbc-5bc2-42d6-a398-bc0e817e2ffd"
+    },
+    "tracing_project": {
+      "id": "361f999b-3533-44c1-a529-eff58908c6c2",
+      "name": "agent_react_router_with_rag_subgraph"
+    }
+  }
+}
