@@ -1,0 +1,201 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>企业级 Agent 智能终端 V3</title>
+    <style>
+        body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; background-color: #f3f4f6; margin: 0; padding: 20px; display: flex; justify-content: center; }
+        .chat-container { width: 100%; max-width: 800px; background: white; border-radius: 12px; box-shadow: 0 4px 6px rgba(0,0,0,0.1); display: flex; flex-direction: column; height: 90vh; overflow: hidden; }
+        .chat-box { flex: 1; padding: 20px; overflow-y: auto; display: flex; flex-direction: column; gap: 15px; }
+
+        .message { padding: 12px 16px; border-radius: 8px; max-width: 80%; line-height: 1.5; }
+        .msg-user { background-color: #3b82f6; color: white; align-self: flex-end; border-bottom-right-radius: 2px; }
+        .msg-ai { background-color: #f1f5f9; color: #1e293b; align-self: flex-start; border-bottom-left-radius: 2px; display: flex; flex-direction: column; gap: 8px; min-width: 300px; }
+
+        /* 🌟 新增：折叠日志面板样式 */
+        .process-logs { background: #e2e8f0; border-radius: 6px; padding: 8px 12px; font-size: 0.85em; color: #475569; border: 1px solid #cbd5e1; }
+        .process-logs summary { cursor: pointer; outline: none; font-weight: 600; list-style-type: '👉 '; user-select: none; }
+        .process-logs[open] summary { list-style-type: '👇 '; border-bottom: 1px solid #cbd5e1; padding-bottom: 6px; margin-bottom: 6px; }
+        .log-list { margin: 0; padding-left: 20px; list-style-type: none; padding: 0; display: flex; flex-direction: column; gap: 4px; font-family: "Courier New", Courier, monospace; }
+        .log-item { display: flex; gap: 6px; align-items: center; }
+        .ai-content { white-space: pre-wrap; }
+
+        .preset-area { padding: 10px 15px; border-top: 1px solid #e5e7eb; background-color: #f8fafc; display: flex; gap: 8px; overflow-x: auto; white-space: nowrap; scrollbar-width: none; }
+        .preset-area::-webkit-scrollbar { display: none; }
+        .preset-btn { padding: 8px 14px; background-color: #e2e8f0; color: #475569; border: 1px solid #cbd5e1; border-radius: 999px; font-size: 13px; cursor: pointer; transition: all 0.2s; font-weight: 500; }
+        .preset-btn:hover { background-color: #dbeafe; color: #1d4ed8; border-color: #bfdbfe; }
+
+        .input-area { padding: 15px; border-top: 1px solid #e5e7eb; display: flex; gap: 10px; background: white; }
+        input[type="text"] { flex: 1; padding: 12px; border: 1px solid #d1d5db; border-radius: 8px; outline: none; font-size: 16px; }
+        input[type="text"]:focus { border-color: #3b82f6; }
+        .send-btn { padding: 12px 24px; background-color: #3b82f6; color: white; border: none; border-radius: 8px; cursor: pointer; font-size: 16px; font-weight: bold; transition: background 0.2s; }
+        .send-btn:hover { background-color: #2563eb; }
+        .send-btn:disabled { background-color: #94a3b8; cursor: not-allowed; }
+    </style>
+</head>
+<body>
+
+<div class="chat-container">
+    <div class="chat-box" id="chatBox">
+        <div class="message msg-ai">🌟 欢迎使用企业级智能业务网关，请提问。</div>
+    </div>
+
+    <div class="preset-area">
+        <button class="preset-btn" onclick="usePreset('帮我查一下订单 20260509 的状态。')">📦 查订单状态</button>
+        <button class="preset-btn" onclick="usePreset('我花了6500请客户吃饭，公司的报销找谁签字？')">💰 大额报销规定</button>
+        <button class="preset-btn" onclick="usePreset('帮我查一下订单 20260509 的状态。顺便问下公司的报销找谁签字？')">🔥 复合意图压测</button>
+        <button class="preset-btn" onclick="usePreset('你好，今天天气真不错！')">☕ 闲聊防干扰测试</button>
+
+    </div>
+
+    <div class="input-area">
+        <input type="text" id="userInput" placeholder="例如：帮我查一下订单，或者问问报销流程..." onkeypress="handleEnter(event)">
+        <button class="send-btn" id="sendBtn" onclick="sendMessage()">发送</button>
+    </div>
+</div>
+
+<script>
+    const chatBox = document.getElementById('chatBox');
+    const userInput = document.getElementById('userInput');
+    const sendBtn = document.getElementById('sendBtn');
+    const presetBtns = document.querySelectorAll('.preset-btn');
+
+    function handleEnter(e) { if (e.key === 'Enter') sendMessage(); }
+
+    function usePreset(text) {
+        if (sendBtn.disabled) return;
+        userInput.value = text;
+        sendMessage();
+    }
+
+    function togglePresetButtons(disabled) {
+        presetBtns.forEach(btn => {
+            btn.style.opacity = disabled ? '0.5' : '1';
+            btn.style.cursor = disabled ? 'not-allowed' : 'pointer';
+        });
+    }
+
+    function appendMessageContainer(className) {
+        const div = document.createElement('div');
+        div.className = className;
+        chatBox.appendChild(div);
+        chatBox.scrollTop = chatBox.scrollHeight;
+        return div;
+    }
+
+    async function sendMessage() {
+        const message = userInput.value.trim();
+        if (!message) return;
+
+        // 1. 用户气泡
+        const userDiv = appendMessageContainer('message msg-user');
+        userDiv.innerText = message;
+        userInput.value = '';
+        sendBtn.disabled = true;
+        togglePresetButtons(true);
+
+        // 2. 初始化 AI 气泡（包含折叠面板和正文容器）
+        const aiMsgWrapper = appendMessageContainer('message msg-ai');
+        aiMsgWrapper.innerHTML = `
+            <details class="process-logs" open>
+                <summary class="log-summary">⏳ 正在连接服务器...</summary>
+                <ul class="log-list"></ul>
+            </details>
+            <div class="ai-content"></div>
+        `;
+
+        // 获取内部 DOM 节点的局部引用
+        const logDetails = aiMsgWrapper.querySelector('.process-logs');
+        const logSummary = aiMsgWrapper.querySelector('.log-summary');
+        const logList = aiMsgWrapper.querySelector('.log-list');
+        const aiContent = aiMsgWrapper.querySelector('.ai-content');
+
+        // 追加单行日志的辅助函数
+        function addLog(icon, text) {
+            const li = document.createElement('li');
+            li.className = 'log-item';
+            li.innerHTML = `<span>${icon}</span> <span>${text}</span>`;
+            logList.appendChild(li);
+            chatBox.scrollTop = chatBox.scrollHeight;
+        }
+
+        let hasStartedTyping = false; // 用于控制第一次吐字时自动折叠
+
+        try {
+            const response = await fetch('http://127.0.0.1:8000/v1/chat/stream', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ message: message })
+            });
+
+            if (!response.ok) throw new Error('网络请求失败');
+
+            const reader = response.body.getReader();
+            const decoder = new TextDecoder('utf-8');
+            let buffer = '';
+
+            while (true) {
+                const { done, value } = await reader.read();
+                if (done) break;
+
+                buffer += decoder.decode(value, { stream: true });
+                const parts = buffer.split('\n\n');
+                buffer = parts.pop();
+
+                for (const part of parts) {
+                    if (part.startsWith('data: ')) {
+                        const jsonStr = part.replace('data: ', '').trim();
+                        if (!jsonStr) continue;
+
+                        try {
+                            const data = JSON.parse(jsonStr);
+
+                            // 🔄 状态机事件分发
+                            if (data.type === 'status') {
+                                logSummary.innerText = "⚙️ 运行状态追踪";
+                                addLog('💡', data.content);
+                            }
+                            else if (data.type === 'tool_start') {
+                                logSummary.innerText = `⚙️ 正在执行: ${data.tool}...`;
+                                addLog('▶️', `启动工具: <b>${data.tool}</b>`);
+                            }
+                            else if (data.type === 'tool_end') {
+                                addLog('✅', `完成工具: <b>${data.tool}</b>`);
+                                logSummary.innerText = `⚙️ 执行完毕，正在思考...`;
+                            }
+                            else if (data.type === 'token') {
+                                // 🌟 核心 UX：如果大模型开始吐字了，自动将上方的日志折叠！
+                                if (!hasStartedTyping) {
+                                    hasStartedTyping = true;
+                                    logDetails.removeAttribute('open'); // 折叠操作
+                                    logSummary.innerText = '⚙️ 查看底层推理过程 (已折叠)';
+                                }
+                                aiContent.innerText += data.content;
+                                chatBox.scrollTop = chatBox.scrollHeight;
+                            }
+                            else if (data.type === 'done') {
+                                if (!hasStartedTyping) {
+                                    logDetails.removeAttribute('open');
+                                    logSummary.innerText = '⚙️ 执行完毕 (无文本返回)';
+                                }
+                            }
+                        } catch (e) {
+                            console.error("JSON 解析错误:", e, jsonStr);
+                        }
+                    }
+                }
+            }
+        } catch (error) {
+            logSummary.innerText = "❌ 运行崩溃";
+            addLog('❌', error.message);
+        } finally {
+            sendBtn.disabled = false;
+            togglePresetButtons(false);
+            userInput.focus();
+        }
+    }
+</script>
+
+</body>
+</html>

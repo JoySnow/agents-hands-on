@@ -79,7 +79,7 @@ async def sse_event_generator(user_message: str):
     )
     # 我们关心的、需要在前端展示进度条的核心业务节点名称
     # 请确保这些名字与你 workflow.add_node() 里定义的名字一致！
-    target_nodes = ["rag_tool_node", "rewrite", "retriever", "database_tool_node", "rag_search", "db_query"]
+    target_nodes = ["rag_tool_node", "rewrite", "retrieve", "database_tool_node", "rag_search", "db_query"]
 
     async for event in async_stream:
         kind = event["event"]
@@ -94,13 +94,13 @@ async def sse_event_generator(user_message: str):
 
         # --- 拦截器 2：捕获 官方 Tool 的启动 ---
         elif kind in set(["on_tool_start", "on_tool_end"]):
-            yield f"data: {json.dumps({'type': 'tool_start', 'tool': name}, ensure_ascii=False)}\n\n" #.encode("utf-8")
+            yield f"data: {json.dumps({'type': kind[3:], 'tool': name}, ensure_ascii=False)}\n\n" #.encode("utf-8")
 
         # --- 🌟 拦截器 3：捕获 自定义 Node 的启动 (全视之眼) ---
         elif kind in set(["on_chain_start", "on_chain_end"]):
             # 过滤掉杂音，只推送我们关心的核心节点
             if name in target_nodes:
-                yield f"data: {json.dumps({'type': 'tool_start', 'tool': name}, ensure_ascii=False)}\n\n" #.encode("utf-8")
+                yield f"data: {json.dumps({'type': 'tool_' + kind[9:], 'tool': name}, ensure_ascii=False)}\n\n" #.encode("utf-8")
 
     yield f"data: {json.dumps({'type': 'done'}, ensure_ascii=False)}\n\n"
 
