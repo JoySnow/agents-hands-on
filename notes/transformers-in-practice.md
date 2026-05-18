@@ -282,6 +282,55 @@ For a 7B model, 16bit parameter, cost 14 GB 的显存: 7,000,000,000 * 2 Byte = 
 
 ---
 
+### Cross-Attention & Self-Attention
+
+- Self-Attention 解决的是“高内聚”问题（处理单一数据源的内部逻辑）
+- Cross-Attention 解决的则是“低耦合环境下的跨端通信”问题（不同模态、不同系统间的数据对齐）。
+
+在经典的 Transformer 诞生时（2017年），它包含两块：
+ - Encoder (编码器)： 负责阅读源文本（全向 Self-Attention）。
+    - 计算出最终的 K，V， for Decoder 使用。
+ - Decoder (解码器)： 负责生成目标文本（单向 Self-Attention + Cross-Attention）。
+    - 在 Cross-Attention阶段，用自己的 $Q_{cross}$ 去 encoder部分做查询，获取信息。
+
+### modern LLM are all Decoder-Only ?
+
+Yes! 在主流的现代 LLM 中，Encoder 被砍掉了，Cross-Attention 也被彻底抛弃了！
+
+OpenAI 在做 GPT 系列时，做了一个极其激进的系统架构简化：
+ - 直接把 Encoder 和 Cross-Attention 删掉，只保留 Decoder 中的单向 Self-Attention 和 FFN。
+ - 系统不再区分“源数据”和“目标数据”。
+    - 以前 (Encoder-Decoder)： 把问题喂给 Encoder，让 Decoder 生成答案。
+    - 现在 (Decoder-Only)： 把问题和答案强行拼成一条完整的长字符串，直接送进 Decoder！
+
+既然只有 Decoder，多模态数据怎么处理？
+ - LLM 只认识文本 Token，把 图片“伪装”成文本 Token 塞进去！
+
+这个过程分为极其优雅的三步：
+- Step 1: 外部组件提炼特征 (External Vision Encoder)
+我们依然需要一个专门看图的组件（比如 ViT, 视觉 Transformer）。它看完图片后，输出了 256 个图像特征向量。
+注意：这个组件独立于 LLM 之外，就像一个外部微服务。
+- Step 2: 降维与协议转换 (The Projector / 适配器)
+这 256 个图像向量的维度，跟 LLM 底层的文本向量维度是对不上的。于是，工程师在中间加了一个非常简单的线性投影层（Linear Projector，通常就是一个小型的 MLP 网络）。
+它的作用是把图像特征在数学空间上“扭曲、平移”，强制对齐到 LLM 的文本特征空间里。
+- Step 3: 暴力拼接输入流 (Sequence Concatenation)
+这是最神奇的一步！系统把这 256 个经过伪装的“图像 Token”，和用户的“文本 Token”，直接在物理层面拼接成了一个一维数组。
+你的输入 Payload 变成了类似这样：
+[Image_Token_1, Image_Token_2, ..., Image_Token_256, 文本_Token_"这", 文本_Token_"是", 文本_Token_"什么"]
+
+- Step 4: 全局 Self-Attention (统一计算)
+这个混合了图片和文字的一维数组，被直接送入 Decoder-only 的 LLM 中。
+LLM 的底层根本不知道前面那 256 个 Token 是图片！它只是觉得：“哦，这是 256 个我不认识的火星文单词，但没关系，我用一视同仁的 Self-Attention 去计算它们和后面汉字的关联度（QKV 匹配）。”
+
+
+目前 AI 工业界在**多模态**架构上的两条不同路线（或者说“专才”与“通才”的区别）：
+- 路线 A：保留 Cross-Attention 的“专家系统” (如 Whisper, Midjourney)
+    - 特点： 依然采用 Encoder-Decoder。视觉/听觉和文本是物理隔离的。
+    - 优势： 在特定的单项任务（如精准的语音识别、高并发的 AI 绘画）上性能极致，因为跨模态的特征提取非常清晰。
+- 路线 B：抛弃 Cross-Attention 的“通用大一统大模型” (如 GPT-4V, Llama-3-Vision, Qwen-VL)
+    - 特点： Decoder-Only 架构。利用 Projector 将万物（声音、图片、视频帧）统统转化为 Token 序列，强行塞进同一个 Self-Attention 引擎里。
+    - 优势： 极度的通用性！ 你可以在同一个对话框里，传一张图，传一段音频，再加一段文字。模型底层的架构不需要做任何修改，只要显存塞得下这个超长的混合 Token 数组，它就能通过 Self-Attention 算出它们之间所有的隐藏逻辑关系。
+
 ## LLM deployment
 
 ### KV Cache 量化
@@ -348,3 +397,29 @@ H2O (Heavy Hitter Oracle) / StreamingLLM 等算法：
 推理引擎包括开源的 vLLM、HuggingFace 的 TGI (Text Generation Inference)，以及 Nvidia 闭源的 TensorRT-LLM。
 
 
+
+## Future - Mamba
+
+Mamba 的全称是 Selective State Space Model（选择性状态空间模型），由 Albert Gu 和 Tri Dao 在 2023 年底提出。
+它一出世就震惊了 AI 界，因为它不仅在效果上媲美 Transformer，而且真的在理论和工程上实现了线性复杂度 $O(N)$！
+
+
+- Mamba的前身 SSM（State Space Model）
+    - 核心像RNN，有 hidden State，所以O(N)
+
+既然和 RNN 这么像，为什么 RNN 失败了，Mamba 却成功了？
+- RNN 的两大死穴：1. 记忆遗忘（信息被无差别冲刷）；2. 串行计算导致训练极慢。
+
+Mamba 两项革命性的创新
+1. 解决遗忘：Selective Mechanism（选择性机制）
+    - 早期的 SSM 和 RNN 有一个致命弱点：它们的矩阵 $A, B, C$ 是静态的、与输入数据无关的（Input-independent）。不管输入的词是重要的动词，还是毫无意义的标点符号，系统都会用同样的力度去更新那个固定大小的记忆缓存 $h_t$。这导致有效信息很快被噪音淹没。Mamba 的破局点在于加入了“选择性（Selective）”：Mamba 让 $B, C$ 以及控制步长的参数 $\Delta$ 变成了当前输入 $x_t$ 的函数。后端类比（智能日志路由器）：你可以把 Mamba 想象成一个带有了动态 if-else 判断的日志缓存系统。当输入的词是一个毫无意义的语气词（比如 "um", "ah"）时，系统算出的 $\Delta$ 会非常小，Mamba 会直接忽略这个词，保持旧的状态 $h_{t-1}$ 不变。当输入的词是一个极其关键的主语或动词时，Mamba 会立刻放大更新力度，将关键信息强行写入状态 $h_t$ 中。
+    - 结果： Mamba 能够像人类一样，自动过滤掉长文本中的废话，精准记住 10 万字以前发生的核心关键点。它用 $O(N)$ 的复杂度，实现了媲美 Transformer $O(N^2)$ 的长程上下文提取能力！
+2. 解决训练慢：Hardware-aware Parallel Scan（硬件感知的并行扫描）
+    - RNN 最大的痛点是训练时必须一步步算，无法利用 GPU 的高并发。而 Mamba 虽然在推理时是 RNN，但在训练时，它可以化身为完全并行的形态！数学魔法（Associative Scan）： 因为 Mamba 去掉了所有非线性激活函数，它的状态更新是纯线性的。在数学上，连续的线性矩阵乘法满足结合律。这意味着系统可以通过类似“并行前缀和（Parallel Prefix Sum）”的算法，在 GPU 上同时计算出所有时刻的隐藏状态，彻底打破了时间序列的阻塞。
+
+Mamba 最硬核的底层优化：SRAM 显存刺客
+ - 把极致的 GPU 硬件级优化带入了 Mamba。
+ - 痛点： Mamba 既然要动态计算每个时刻的矩阵 $B, C, \Delta$，意味着要产生大量的中间变量。如果把这些变量频繁地在 GPU 的 HBM（主显存，容量大但极慢）和 计算单元之间搬来搬去，巨大的 I/O 延迟会彻底拖垮速度。Mamba 的工程解法（Kernel Fusion）：Tri Dao 亲自写了极其硬核的 CUDA 底层代码。Mamba 会把那个巨大的隐藏状态 $h$ 死死地锁在 GPU 的 SRAM（超高速缓存，极小但极快，类似于 CPU 的 L1/L2 Cache）里，绝不把它写回主显存！在 SRAM 内部，系统瞬间完成所有的动态权重生成、状态更新和输出，最后只把算好的最终结果 $y_t$ 写回 HBM。
+ - 这种极致的“避免显存读写（Memory IO-Bound Optimization）”，让 Mamba 的运行速度比同级别的 Transformer 快了惊人的 3 到 5 倍。
+
+Mamba 代表了未来最美的工程愿景——没有 KV Cache 的无限上下文生成。目前它在 7B 及以下级别的小参数模型上（如 Jamba, Mamba-Codestral）已经展现出了打平甚至超越 Transformer 的实力。
