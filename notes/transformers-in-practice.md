@@ -105,6 +105,8 @@ Word Embedding：
         - 比如把 32 个 Q 分成 8 组，每组共享 1 个 K 和 1 个 V。
         - $W_K$ 和 $W_V$ 的大小变成了 $4096 \times (8 \times 128)$。
 
+- 典型的多头注意力层的输出计算公式：$$\text{MultiHead}(Q, K, V) = \text{Concat}(\text{head}_1, \text{head}_2, \dots, \text{head}_h)W_O$$
+
 4. 在模型训练与设计时，选择这些维度的意图是什么？
 
     架构师选择具体的维度大小（比如 $d_{model} = 4096$, $d_k = 128$, Heads = 32）, 主要基于以下三个工程和算法意图：
@@ -215,6 +217,59 @@ FFN 的物理意义：大模型的“知识库” (Key-Value Memory)
 
 增加模型参数（比如从 7B 增加到 70B），很大一部分就是在扩充 FFN 里面的那个隐藏维度（让它从 16384 维变成几万甚至十几万维），从而相当于给大模型加了一块更大容量的“知识硬盘”。
 
+### After FFN
+
+... -> Attention -> Add & Norm -> FFN ->  Add & Norm -> ?
+
+- 和 Attention 层一样，数据从 FFN（前馈神经网络）出来后，必须再经过一次残差连接（Add）和层归一化（Norm）。公式：
+    $X_{layer\_out} = \text{LayerNorm}(X_{attention\_out} + \text{FFN}(X_{attention\_out}))$
+
+```py
+if not last layer:
+    进入下一层的"Attention + FFN"
+else:
+    Linear Projection (逆向查表 / 反嵌入) -> 获取 Logits -> Softmax -> Sampling
+```
+
+After 整个模型的“最后一层”（最终宏观步骤）：
+ - 当数据走完了所有的 Attention+FFN 循环后，我们最终得到了一个包含高级语义的 $4096$ 维向量。
+ - 翻译回人类能看懂的词汇：
+    - Step 1: 最终层归一化 (Final Layer Normalization)
+    - Step 2: 解嵌映射层 (Unembedding Layer / LM Head)：
+        - 把这个 $4096$ 维的向量乘以一个超级巨大的输出矩阵（大小是 $4096 \times \text{词表大小}$，比如 $4096 \times 128,000$）。
+        - hint. 权重共享（Weight Tying）of $E_{Embedding}$ and $E_{Unembedding}$
+    - Note. 有了 Logits 之后，就进入了推理引擎（如 vLLM, TensorRT-LLM）的控制领域了。
+    - Step 3: 获取 Logits: 得到 $128,000$ 个得分（Logits）, for 预测词
+        - Step 3.1: 惩罚机制 (Penalties) - 过滤掉“废话” - 修改 Logits 的值
+        - Step 3.2: Temperature (温度缩放) - 控制“随机性”
+        - Step 3.3: Softmax (转化为概率)： 用 Softmax 把 Logits 变成加起来等于 $100\%$ 的概率分布。
+        - Step 3.4: 截断策略 (Truncation) - apply Top-K 与 Top-P
+        - Step 3.5: Sampling (采样): 基于这概率进行带权重的随机抽签，抽出下一个字！
+
+权重共享（Weight Tying）
+- 设计初衷：共享 (Tied)
+    - 早期模型（如 2017-2019 年）为了节省内存，$E_{Embedding}$ and $E_{Unembedding}$ share，互为转置矩阵。
+    - 适合小模型
+- 现代演进： 不共享 (Untied)
+    - 现代 LLM 的绝对主流
+    - 现代模型（尤其是百亿、千亿参数的大模型）越来越倾向于解绑（Untied）。
+    - 因为“读（理解输入）”和“写（生成输出）”其实是两种不同的任务。 解绑可以让模型用独立参数分别优化这两个过程。
+    - 且在千亿参数规模下，节省几十兆的词表参数已经微不足道。
+
+
+### 模型的层数 of "Attention + FFN"
+
+每层的架构一模一样（都是 Attention + FFN），但是它们内部的权重矩阵（$W_Q, W_K, W_V, W_1, W_2$）是完全独立、互不相同的！
+
+第 0 层负责提取浅层的语法特征（主谓宾），到了第 31 层，矩阵里装的已经是深层的逻辑推理和宏观概念了。
+
+主流模型的真实设定参数（例子）：
+- 轻量级模型 (如 BERT-base): 循环 12 次。
+- 百亿级模型 (如 Llama-3-8B): 循环 32 次。
+- 千亿级巨兽 (如 Llama-3-70B, GPT-3): 循环 80 到 96 次 不等。
+
+
+
 ### 模型参数(Model Parameters)
 
 这些参数分布在 Transformer 的哪里？（参数资产盘点）
@@ -239,7 +294,6 @@ FFN 的物理意义：大模型的“知识库” (Key-Value Memory)
 
 
 3. "7B", "70B" 到底意味着什么系统开销？当我们讨论 Llama-3-8B 或者 Qwen-72B 时，这个 B (Billion, 十亿) 就是指模型参数的总数量。作为后端，你需要立刻将这个数字转化为系统资源（特别是 GPU 显存 VRAM）的开销。一个非常实用的工程粗算公式：现代模型通常使用半精度浮点数（FP16 或 BF16）来存储参数。在计算机里，1 个 16 位浮点数占用 2 Bytes（字节） 的空间。计算 Llama-2-7B (70亿参数) 的静态显存：参数总数：7,000,000,000占用空间：$7,000,000,000 \times 2 \text{ Bytes} \approx 14 \text{ GB}$这意味着什么？即便你什么用户请求都不处理（没有我们之前聊过的 KV Cache，没有 Batch 堆积），仅仅是把 Llama-2-7B 的这套“配置规则”原封不动地加载到显卡上，它就会立刻吞噬掉整整 14 GB 的显存！如果你要跑 70B 的超大模型，光是参数加载就需要 $70 \times 2 = 140 \text{ GB}$ 的显存（通常需要用到两张极其昂贵的 80GB A100 显卡）。
-
 
 
 ### Quantization 量化
@@ -333,6 +387,85 @@ LLM 的底层根本不知道前面那 256 个 Token 是图片！它只是觉得�
 
 ## LLM deployment
 
+### Prefill & Decode 阶段
+
+LLM 运行 on a 1000 token prompt input:
+- Prefill 阶段 - (Compute-Bound)
+    - 推理引擎会把这 1000 个 Token 一次性、并行地输入到模型中。
+    - 核心目的（为什么叫预填充？）： 为这 1000 个输入 Token 计算出它们在每一层的 $K$ (Key) 和 $V$ (Value) 向量，并将这些向量“填充（Fill）”到 GPU 的显存中（即建立 KV Cache）。
+    - 输出： 跑完这一次重型的并行计算后，模型吐出第 1001 个词（即 AI 回答的第一个字），并且缓存（Cache）已经“预热”完毕。
+- Decode 阶段 - (Memory-Bound)
+    - 极其低效的单步循环： 此时，模型每次只接收 1 个 Token（即刚刚生成的那个字）。
+    - 复用缓存： 这个新的 Token 在穿过网络时，需要用到之前的上下文信息，但它不需要把前面 1000 个字重新算一遍。它只需要去显存里读取 Prefill 阶段建好的 KV Cache，和当前的 Token 做 Attention 计算即可。
+    - 输出： 吐出下一个新词，并把这个新词的 $K, V$ 追加到 KV Cache 中。然后重复这个循环，直到生成结束。
+
+#### **痛点**：长 Prompt 造成的“世界停顿” (Stop-The-World)
+- in 传统单节点引擎
+- 如果此时有 10 个用户正在愉快的进行一问一答（处于 Decode 阶段，生成极快），突然第 11 个用户发来了一份长达 10 万字的 PDF 让模型总结。
+- 模型为了处理这个庞大的 Prefill 请求，会把 GPU 的算力全部霸占。
+- 这会导致什么？那 10 个正在接收文字的用户会突然卡住（延迟毛刺，Latency Spikes），屏幕上的字不输出了，直到那 10 万字处理完毕。
+
+#### Chunked Prefill 的运行机制
+
+Chunked Prefill 是目前解决“算力与访存抢占”最优雅的**纯软件级调度**方案。
+
+引入操作系统中最经典的调度概念：时间片轮转（Time-Slicing） 与 任务拆分:
+ - 切片 (Chunking)：
+    - 引擎不再要求一次性吞下那 10 万字的 Prompt。它设定一个全局的“最大计算块大小（Chunk Size）”，比如 512 个 Token。那 10 万字的长请求，会被切分成大约 200 个大小为 512 的小块。
+ - 时间片调度 (Scheduling)：
+    - 在 GPU 的下一个计算周期（Tick）里，调度器会这样分配工作：
+        - 拿出一个 Prefill 的切片（512 个 Token）。
+        - 把那 10 个老用户的 Decode 请求（共 10 个 Token）也拉过来。
+        - 混合批处理 (Mixed Batching)： 将这 512 + 10 = 522 个 Token 拼成一个 Batch，一起送给 GPU 计算。
+ - 状态保留与让出 (Yield)：
+    - 算完这 522 个 Token 后，那 10 个老用户顺利拿到了他们的新字，延迟完全不受影响。
+    - 而那个长请求，虽然只处理了第一块（512 个字），但引擎会把这部分算好的 KV Cache 先存起来，然后主动让出（Yield）执行权，等待下一个周期继续处理第二块。
+
+#### Prefill-Decode 分离架构（Disaggregation）
+
+Prefill-Decode 分离架构本质上是用“极高的网络带宽”来换取“GPU 算力和显存的完美隔离与极致利用率”。
+
+解决方案：Prefill-Decode 分离架构
+
+工程师们将 GPU 集群按职责划分成了 **两个物理上隔离的资源池（Pools）**。
+1. Prefill 节点池 (计算特化集群)
+ - 硬件画像： 采用算力极强（如 H100）、但不需要配备超大显存的 GPU。
+ - 职责： 专门负责接收新用户的长 Prompt，进行高并发的矩阵乘法，快速计算出这批 Prompt 的状态数据（KV Cache）。
+ - 运行状态： 批处理模式，算力利用率极高，算完立刻把结果抛出。
+
+2. Decode 节点池 (存储/访存特化集群)
+ - 硬件画像： 采用显存容量极大、带宽极高（如多张 A100 80G 组网，甚至未来的特殊大显存芯片），算力普通即可。
+ - 职责： 专门维护海量并发用户的上下文状态（KV Cache），在一个相对纯粹、没有算力抢占的环境中，以极低延迟逐字生成 Token。
+ - 运行状态： 类似 Redis 集群，吃满内存和带宽，但响应极快。
+
+Prefill-Decode 分离架构最大的工程挑战就在于：状态迁移（State Transfer）- 网络传输瓶颈 (The Network Toll)
+- 在分离架构中，KV Cache 数据 流转过程：
+    - Prefill 节点算出了几千个词的 KV Cache。
+    - 必须把这几百兆甚至几个 G 的 KV Cache 张量数据，通过网络传输给 Decode 节点。
+    - Decode 节点接收完毕后，才能开始生成第一个字（Time To First Token, TTFT）。
+- 博弈
+    - 超长上下文(eg. 100K Token)，其 KV Cache 可能高达数十 GB。
+    - 即使是使用最顶级的 InfiniBand (IB) 网络 或 NVLink 做 RDMA 直通，通过网络传输这么庞大的数据，所消耗的时间也可能超过了分离架构带来的收益。
+
+### Prompt Caching
+
+为什么要引入 Prompt Caching？（痛点场景）
+- 我们先看几个真实业务中极其浪费算力的场景：
+    - System Prompt（系统提示词）冗余： 你的 AI 应用可能在后台悄悄给每个用户的请求前面都拼了一段长达 1000 字的系统指令（比如：“你是一个资深架构师，请遵循以下 50 条代码规范...”）。如果有 1 万个并发用户，这 1000 个词的 Prefill 计算会被重复执行 1 万次。
+    - 多轮对话的长尾效应： 在一个 10 轮的对话中，当计算第 10 轮的回复时，前 9 轮的历史记录又会被作为 Prompt 发给模型重新 Prefill 一遍。
+    - RAG（检索增强生成）与长文档问答： 用户上传了一份 5 万字的财报 PDF，然后连续问了 5 个不同的问题。如果不做缓存，每次提问都要把这 5 万字重新跑一遍矩阵乘法。
+- 核心结论：
+    - 这些场景中，Prompt 的前缀（Prefix）是完全相同的。
+    - 如果能把这些相同前缀已经算好的 KV Cache 保留下来，当新请求到来时直接复用，就能把 Compute-Bound（极耗算力的 Prefill）瞬间降维成 Memory-Bound（只需简单读取的 Decode）。
+
+底层数据结构：如何高效匹配和管理缓存？
+- 不能使用简单的哈希表，
+- 使用了 基数树（Radix Tree / Prefix Tree）
+
+对新输入，做“最长前缀匹配”:
+ - 匹配部分，复用，对应 物理显存块的引用计数+1；
+ - 其余部分，做 Prefill 计算
+
 ### KV Cache 量化
 
 **结论**：权重占用的显存是固定的（静态开销），而 KV Cache 占用的显存随“用户数 × 文本长度”呈线性爆炸（动态开销）。
@@ -395,7 +528,6 @@ H2O (Heavy Hitter Oracle) / StreamingLLM 等算法：
 ### TBC. 推理引擎（Inference Engine)
 
 推理引擎包括开源的 vLLM、HuggingFace 的 TGI (Text Generation Inference)，以及 Nvidia 闭源的 TensorRT-LLM。
-
 
 
 ## Future - Mamba
