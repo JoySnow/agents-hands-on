@@ -63,14 +63,32 @@ Word Embedding：
 
 
 ### 位置编码 (Positional Encoding)
-得到$3 \times 4096$ 的词嵌入（Word Embedding）矩阵后：
+
+注意力机制（Attention）天然是“排列不变的（Permutation Invariant）.
 
 - 问题： 直接用 词嵌入矩阵 送入attention的话，词之间的 **位置关系信息丢失**。
-- 解决：
+- 解决方案： 我们必须给每个输入单词打上一个“Sequence ID”或“时间戳”，这就是位置编码。
+
+
+传统绝对位置编码 (Absolute PE)
+ - 简单粗暴：把“词的语义向量”和“位置的编码向量”直接相加。
+ - 对得到$3 \times 4096$ 的词嵌入（Word Embedding）矩阵后：
     - 在Attention 计算前，Transformer 会生成一个同样大小为 $3 \times 4096$ 的位置编码矩阵（里面包含了表示绝对或相对位置的数学特征，通常通过正弦/余弦函数或可学习参数生成），
     - 然后将它与词嵌入矩阵直接相加。$$X_{\text{input}} = \text{Word\_Embedding} + \text{Positional\_Encoding}$$
+ - 现在，这个 $3 \times 4096$ 的输入矩阵不仅包含了“词的意思”，还包含了“词在句子里的绝对/相对位置”。
 
-现在，这个 $3 \times 4096$ 的输入矩阵不仅包含了“词的意思”，还包含了“词在句子里的绝对/相对位置”。
+RoPE (Rotary Position Embedding，旋转位置编码) - 相对位置：
+ - RoPE 的设计哲学是：我们不显式地给特征向量做加法，而是根据它的绝对位置(Relative Position) $m$，在多维空间中对它进行“旋转” (Rotation)。 奇妙的是，当两个旋转后的向量做内积（Attention 计算）时，它们的绝对位置就会被抵消，最终的得分只与它们的相对距离有关。
+ - 通过对单个 Token 注入绝对位置（旋转 $m$ 度），在 Attention 匹配时 完美获得了相对位置特征
+
+为什么 RoPE 统治了现代大模型？(工程优势)
+ - 即插即用 (只作用于 Q 和 K)：
+    - RoPE 是在多头注意力（Multi-Head Attention）内部计算时，针对 $Q$ 和 $K$ 动态施加的，**不改变 Value ($V$) 向量**。
+    - **不改变 Value ($V$) 向量**，这就保证了输出的数据依然是纯粹的语义信息，没有被位置信息“污染”。
+ - 更好的外推性 (Extrapolation)：
+    - 如果模型在训练时只见过 4096 长度的文本，但在推理时遇到了 8192 长度的文本。
+    - 由于 RoPE 依赖的是相对距离，只要相对距离在训练分布内，模型就能表现出一定的适应能力（比绝对位置编码直接崩溃要好得多）
+
 
 ### Attention
 
@@ -523,6 +541,26 @@ H2O (Heavy Hitter Oracle) / StreamingLLM 等算法：
 工程解法 (Context Parallelism / 上下文并行) for 极致长文本API:
 - 为了在 API 层面真正向你提供 1M 的并发调用能力，API 提供商的底层平台必须引入极其复杂的分布式架构，
 - 比如 Ring Attention (环形注意力)。系统会把你的 1M 请求切成 4 块，分别派发给 4 张跨节点的 GPU。这 4 张 GPU 在计算 Attention 时，会像一个环形网络一样，通过极其高速的 NVLink 带宽，一边计算一边互相传递（点对点通信）自己切片内的 KV 块。
+
+### 投机解码 (Speculative Decoding) 或 推测采样 (Speculative Sampling)
+
+解决的问题：GPU 计算单元 与 显存 之前的 I/O瓶颈 - Memory Bandwidth
+    - 基础模式下，每计算一个token，做 搬运 1 次权重的耗时
+
+Target + Draft model 模式：
+ - have a input prompt;
+ - Draft model 做推理，预测出一批token， 比如5个；
+ - Target model：
+    - 接收 “prompt + 5预测token”，正常运算；
+    - 依据target运算结果，判断draft预测的5个token是否准确；
+    - 准确的就采纳 =》 target一次性做5个token；
+    - 不准确，如从第四个开始不准确，就采纳前三个，用自己的第四个 =》 target一次性做4个token；
+ - Target的计算量反而增大了。但是整体速度提升了，一次权重搬运，做出了多个token。
+
+主流大模型现在是怎么用它的？（真实工业界案例）
+ - 投机解码已经是目前顶尖推理引擎（如 vLLM, TensorRT-LLM, TGI）的标配，并在不断进化。
+ - A. 经典双模型架构 (Target + Draft)
+ - B. 进化版：单模型挂载“美杜莎多头” (Medusa Heads / EAGLE)
 
 
 ### TBC. 推理引擎（Inference Engine)
