@@ -200,6 +200,16 @@ RoPE (Rotary Position Embedding，旋转位置编码) - 相对位置：
 经历完这整套流程：Embedding $\rightarrow$ QKV $\rightarrow$ Attention $\rightarrow$ Add&Norm $\rightarrow$ FFN $\rightarrow$ Add&Norm，数据才算真正走完了一个 Transformer Layer。
 
 
+#### Flash Attention - 加速attention计算，绕开memory-bound
+
+HBM <--> SRAM   # 耗时瓶颈，计算单元空转
+
+Flash Attention：
+ - 减少Attention计算中的 HBM SRAM间的数据搬运。
+ - 分块 Tile load to SRAM, 一次数据驻留，多步计算 QK，softmax, *V， 输出Score，一次落回HBM
+ - 省去整体load 计算的中间步骤搬运。
+
+
 ### FFN - 前馈神经网络，Feed-Forward Network
 全程：Position-wise Feed-Forward Network（逐位置前馈网络）。
 
