@@ -19,6 +19,7 @@ dependencies = [
     "ipywidgets>=8.1.0",
     "langchain>=1.2.15",
     "langchain-community>=0.4.1",
+    "openai>=2.41.0",
 ]
 
 [project.optional-dependencies]
