@@ -45,7 +45,35 @@ State隔离级别:
 
 ## RAG
 
-混合检索（Hybrid Search）
+全流程：
+ 数据处理 -> chunking -> embedding
+ 检索 -> Multi-Query + 混合检索[BM25+向量检索] + 结果处理[倒数秩融合RRF+Reranker]
+ 生成
+
+完整链路：小白提问 -> LLM 扩写出 3 个专业 Query -> 并发召回 15 篇文档 -> 去重后剩余 10 篇 -> 统统丢给 Reranker 交叉打分 -> 截断留下得分最高的 3 篇 -> LLM 生成最终答案。这才是无懈可击的企业级闭环！
+
+### 向量检索的原理
+
+- 面试官会问："向量检索和关键词检索有什么区别？"以及"Embedding 的原理是什么？为什么语义相似的文本向量距离近？"
+- 向量检索的本质：
+    - 把文本转换成高维空间中的点，语义相似的文本在这个空间里距离近。检索就是找离问题向量最近的几个文档向量。
+- 最常用的是余弦相似度，计算两个向量的夹角余弦值
+- ANN 检索（近似最近邻）
+    - 文档量大了（百万级以上），逐个计算相似度太慢。
+    - ANN 的思路是：不要求找到绝对最近的，找到足够近的就行，换速度。
+    - 主流 ANN 算法：
+        - HNSW： 多层跳表图，从上层粗搜到下层精搜 ； 查询快，内存占用大，Milvus 默认
+        - IVF：先聚类，只搜最近的几个簇；可控精度，适合超大规模
+        - PQ（乘积量化）： 压缩向量维度，降低内存；内存省，精度有损
+- HNSW 的核心参数：
+    - M（每个节点的的最大连接数，越大图越密: 质量越高, 但内存越大）
+        - 经验值：对于简单的低维数据，M 可以设置为 5 到 16；
+        - 对于复杂的高维数据（如文本的 embedding），通常设置为 16 到 64 之间。
+    - ef_construction（建图时搜索宽度，越大: 图质量越高, 但建图越慢）
+        - 经验值：通常建议将其设置得相对较大（例如 100 到 200，或者至少是 M 的 2 倍以上），以确保图的质量。
+        - 该参数在索引构建完成后即固定。
+
+### 混合检索（Hybrid Search）
 ### 分布式系统经典难题：异构数据源打分融合（Score Fusion）
 
 破局点 1：倒数秩融合 (RRF - Reciprocal Rank Fusion)
@@ -64,7 +92,64 @@ State隔离级别:
 - BM25Retriever (负责稀疏精确检索)
 - VectorStoreRetriever (负责密集语义检索)
 - EnsembleRetriever (即“集成检索器”，底层默认使用 RRF 算法进行合并)
-- ContextualCompressionRetriever (上下文压缩检索器，用来挂载 Reranker 模型进行最终的精排截断)
+- ContextualCompressionRetriever : **BAAI/bge-reranker-base** (上下文压缩检索器，用来挂载 Reranker 模型进行最终的精排截断)
+
+### Chunk
+- Chunk大：信息稀释， 检索时真正相关 被淹没
+- Chunk小：上下文丢失
+- overlap: 通常设 chunk_size 的 10%-20%。
+
+三种主流 Chunk 策略
+- ① 固定长度切分——最简单，每 512 token 切一块。优点是简单，缺点是不管语义边界，可能把一句话切两半。
+
+- ② 递归切分——按段落→句子→字符的优先级递归切分，尽量在自然边界处切断。这是生产环境最常用的方案。
+    ```
+    from langchain.text_splitter import RecursiveCharacterTextSplitter
+
+    splitter = RecursiveCharacterTextSplitter(
+        chunk_size=500,
+        chunk_overlap=200,  # 相邻 chunk 重叠 200 字符
+        separators=["\n\n", "\n", "。", "！", "？", "；", "，", " ", ""]
+    )
+    ```
+
+- ③ 语义切分——用 Embedding 计算相邻句子的语义相似度，在语义断点处切分。理论上最好，但计算量大，生产环境用得少。
+
+#### Chunk不同文档类型分别怎么处理？
+1. 纯文本文件 (Plain Text, .txt)
+    - 处理策略：递归字符文本切分 (Recursive Character Text Splitting)。尽量在自然边界处切断。
+2. Markdown 文件 (.md)
+    - 逻辑层级（标题、列表、代码块），非常适合基于结构的切分。
+    - 保留父级标题 作为上下文 在 块内
+3. PDF / Word 等富文本与版式文档 (.pdf, .docx)
+    - 处理策略：版面分析 (Layout Analysis) + 元素分类切分。
+    - 需要借助专门的解析工具（如 Unstructured.io、PyMuPDF、LayoutLM 等）识别出标题、正文、页眉、表格和图片。
+    - 处理eg.：工具先将 PDF 页面解析出“段落 A”、“表格 B”和“图表 C”。
+        - 段落 A 按常规文本切分；
+        - 表格 B 会被转换为 Markdown 表格格式单独作为一个 Chunk 存储；
+        - 图表 C 可能会通过多模态模型（如 GPT-4o）生成一段描述文本，再将其作为文本 Chunk 存入。
+4. 代码文件 (.py, .java, .js, 等)
+    - 处理策略：基于抽象语法树 (AST) 的切分。按代码的逻辑单元 函数、类和方法
+5. 结构化数据 (CSV, JSON)
+    - 处理策略：基于行/节点的切分 (Row/Node-based Splitting) 或 模板化转换。
+
+### Embedding 模型怎么选？中文场景选什么？
+- 面试官会问："你们用的什么 Embedding 模型？为什么选它？和 OpenAI 的 ada-002 对比过吗？"
+- 选 Embedding 模型看三个维度：语言支持、向量维度、检索效果（MTEB 排名）。
+    - bge-large-zh-v1.5 ； 1024 ；中文效果最好，开源，本地部署
+    - text-embedding-3-large (OpenAI)； 3072； 效果好，但 API 调用有成本，中文不如 bge
+- 维度越高越好吗？ 不是。维度高→表达能力强但存储和检索成本也高。1024 维是当前性价比最好的选择，3072 维的检索效果提升有限但存储翻 3 倍。
+
+### RAG 的生成端幻觉怎么处理？
+
+六种幻觉处理策略
+- 1、Prompt 约束——在 Prompt 里明确要求"只能基于检索结果回答，检索结果没有的信息不要编造"。
+- 2、输出自校验——LLM 生成回答后，再用小模型检查，做“蕴含关系推断（NLI）， YES or NO.
+- 4、温度调低——temperature 设 0.1-0.3，降低 LLM 的随机性，减少"编造"的倾向。
+
+- 3. 兜底回答——当检索结果的相似度都低于阈值时，直接回答"未找到相关信息"，而不是让 LLM 硬编。
+- 5. 模型本身的基础能力
+- 6、引用标注——要求 LLM 在回答时标注每条信息的来源 chunk，方便人工核查。
 
 ### ChromaDB
 
@@ -118,8 +203,20 @@ Lite LLM to rewrite the user query, say, LLM 扩写出 3 个专业 Query.
 
 完整链路：小白提问 -> LLM 扩写出 3 个专业 Query -> 并发召回 15 篇文档 -> 去重后剩余 10 篇 -> 统统丢给 Reranker 交叉打分 -> 截断留下得分最高的 3 篇 -> LLM 生成最终答案。这才是无懈可击的企业级闭环！
 
-#### TODO: Try this Multi-Query + Rerank
+### TODO: Add doc for tried Multi-Query + Rerank
 
+### 向量数据库怎么选？Milvus、FAISS、Qdrant 各自适合什么场景？
+面试官会问："你们项目用的什么向量数据库？为什么选它？"
+
+### Q&A
+
+- Q：Top-K 设多少？设大了设小了各有什么问题？
+    - A: 通常 K=5-10 是比较好的平衡点.
+    - 设小了（K=3）：可能漏掉相关文档，召回不够。设大了（K=20）：太多无关信息干扰 LLM，增加幻觉风险和 Token 消耗。加了 Rerank 之后可以先用 K=20 检索再 Rerank 取 Top-5。
+
+
+### refers:
+https://mp.weixin.qq.com/s/74EC_fteGzIPS46ohX_ncw
 
 
 ## Guardrails 安全拦截
