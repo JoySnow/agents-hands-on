@@ -27,7 +27,51 @@
     - 作用：**Ingress阶段，before any LLM call，先用 Pydantic 对外部请求进行反序列化和验证**。
     - 如果不符合要求（缺胳膊少腿的告警），直接在 API 层拒绝，根本不进入 Agent 工作流。
 
+### Prompt Caching
+Prompt Caching 好处：省钱，更快。
+
+工业实践：
+ - “前缀稳定化”设计原则
+ - 多 Agent 系统保留缓存的“前缀复用”技巧：
+    - 共享 System Prompt 前缀
+    - 使用同一 Session ID / Thread 传递上下文
+
+Prompt Caching在Agent设计中是否重要？
+ - 在真实设计中，缓存权重取决于规模与上下文长度。
+    - 小规模 / 内部工具：缓存几乎不需要作为设计因素。
+    - 大规模 / 长上下文 / 用户面：缓存的地位会上升到和功能准确性同样重要的层面，因为太贵太慢的产品同样无法落地。
+        - 这就像数据库索引：单表几百条数据时没人建索引，但到了亿级就是生存问题。
+
+
+
+
 ## Multi-Agent designs
+
+### Workflow OR Agent?
+
+Workflow：LLM 和工具按预定义的代码路径编排——路径可控、可测、可回放。
+Agent：LLM 自己决定下一步做什么、用什么工具——路径由模型在运行时动态规划。
+
+Anthropic 在"Building Effective Agents"中列出五种 workflow 模式：
+- Pipeline
+- Routing
+- Parallelization
+- Orchestrator-Workers
+- Evaluator-Optimizer
+
+默认先做 workflow，只有当任务必须依赖模型在运行时做决策时，才值得上 agent。
+- 先说： Workflow 和 agent 的 **本质区别** 是"路径预定义"vs"模型动态决定"。
+- 再说： 用四个维度判断：
+    - 路径是否已知
+    - 错误成本
+    - 是否需要运行时决策
+    - 时延要求
+- 最后： 大部分场景五种 workflow 模式就能覆盖，真正需要 agent 的场景远比想象的少。
+
+直接上Agent的坑：
+ - 调试成本极大增高
+ - 如有固定规则，写成模型判断没必要
+ - 为agent设计 fallback: 设计好降级路径, 退回到 workflow 或升级人工。
 
 ### 全局状态（Global State）
 
@@ -51,6 +95,33 @@
     - 内部记忆（Local State）：只存在于“日志分析 Agent”自己内部的短期运行循环中。
     - 全局输出（Global State Update）：
         当日志 Agent 确认结论后，它向全局状态更新的只有一句话或一个 JSON 对象：{"component": "nginx", "error_type": "OOM Killer triggered", "timestamp": "14:30"}。这部分就是你提到的“摘要（Summary）”。
+
+### 单 Agent 还是 Multi-Agent？
+TBC.
+TODO: fill-in
+
+
+### Context Messages in Multi-Agent
+
+- 场景：
+    - 在LangGraph实现的多智能体系统中，采用orchestrator-workers模式，有3个不同Debug目的的worker和1个fix worker。它们以特定工作流运行，使用共享全局状态。每个agent有自己的系统提示和工具集。问题：如何更好地处理上下文消息？为什么？全局消息是否仍然有效？
+
+- 设计：
+    - 基础：
+        - 共享全局状态；
+        - 每个agent有自己的系统提示和工具集；
+    - **维护一个 all_messages 仓库 in 全局状态**
+    - **“动态构建精简上下文”**：
+        - 每个 agent 只获得它的角色和当前任务所需的、经过提炼的信息。
+        - for each sub-agent: 由 orchestrator（或专门的上下文构建器）从全局仓库中筛选、重组出当前 agent 需要的消息子集，作为该 agent 的 input_messages。
+        - sub-agent执行结果全部追加入all_messages;
+    - 最小必要原则：只给该 agent 完成任务绝对需要的信息。
+    - 角色隔离：不同 agent 看到的世界不同。调试 worker 只看原始数据和 orchestrator 指令，修复 worker 只看调试结果摘要，不看原始日志。
+    - 可追溯性：虽然每个 agent 的输入是裁剪过的，但全局仍应保留完整的交互记录（用于审计、调试、重放）。
+    - 动态性：上下文构建逻辑不是写死的，而是根据当前工作流状态、条件分支、agent 的输出质量动态调整。
+
+
+
 
 ## Agent 幻觉处理
 
